@@ -28,18 +28,32 @@ type NormalizeConfig struct {
 	RemoveChars        string `mapstructure:"remove_chars"`
 }
 
+type DedupeConfig struct {
+	Enabled        bool   `mapstructure:"enabled"`         // 重複排除を有効化
+	Columns        []int  `mapstructure:"columns"`         // キー作成に使う列(1オリジン)。未指定なら Config.Columns
+	AppendKey      bool   `mapstructure:"append_key"`      // キー列を末尾に追加
+	ReplaceTarget  bool   `mapstructure:"replace_target"`  // columns先頭列をキーで置換
+	DropDuplicates bool   `mapstructure:"drop_duplicates"` // 既出キーの行を出力しない
+	Keep           string `mapstructure:"keep"`            // first|last（DropDuplicates時の残し方）
+	OutputHeader   string `mapstructure:"output_header"`   // AppendKey時のヘッダ名
+	Delimiter      string `mapstructure:"delimiter"`       // 連結区切り
+}
+
 type Config struct {
-	Columns   []int           `mapstructure:"columns"`
-	CodePage  string          `mapstructure:"code_page"` // cp932|utf8
+	Columns   []int           `mapstructure:"columns"`    // 正規化対象列(1オリジン)
+	CodePage  string          `mapstructure:"code_page"`  // cp932|utf8
+	HasHeader bool            `mapstructure:"has_header"` // 先頭行はヘッダ行か
 	Log       LogConfig       `mapstructure:"log"`
 	Normalize NormalizeConfig `mapstructure:"normalize"`
+	Dedupe    DedupeConfig    `mapstructure:"dedupe"`
 	Timeout   time.Duration   `mapstructure:"timeout"`
 }
 
 func defaultConfig() Config {
 	return Config{
-		Columns:  []int{0},
-		CodePage: "utf8",
+		Columns:   []int{1}, // 1オリジン
+		CodePage:  "utf8",
+		HasHeader: false,
 		Log: LogConfig{
 			Level:  "info",
 			Format: "text",
@@ -49,37 +63,50 @@ func defaultConfig() Config {
 			FullDigitToHalf: true,
 			DashToHyphen:    true,
 		},
+		Dedupe: DedupeConfig{
+			Enabled:        false,
+			AppendKey:      false,
+			ReplaceTarget:  false,
+			DropDuplicates: false,
+			Keep:           "first",
+			Delimiter:      "|",
+			OutputHeader:   "__dedupe_key",
+		},
 		Timeout: 10 * time.Minute,
 	}
 }
 
-// Load merges: defaults < file < env < flags
+// Load merges defaults < file < env < flags
 func Load(cfgFile string, flags *pflag.FlagSet) (Config, error) {
-    // 1 まずデフォルト値入りの構造体を作る
-    c := defaultConfig()
+	c := defaultConfig()
 
-    v := viper.New()
-    if cfgFile != "" {
-        v.SetConfigFile(cfgFile)
-    }
-    v.SetConfigType("yaml")
-    v.SetEnvPrefix("STRCLEANER")
-    v.AutomaticEnv()
+	v := viper.New()
+	if cfgFile != "" {
+		v.SetConfigFile(cfgFile)
+	}
+	v.SetConfigType("yaml")
+	v.SetEnvPrefix("STRCLEANER")
+	v.AutomaticEnv()
 
-    // 2 設定ファイル・環境変数・フラグで「上書き」する
-    _ = v.ReadInConfig()
-    _ = v.BindPFlags(flags)
+	_ = v.ReadInConfig()
+	_ = v.BindPFlags(flags)
 
-    if err := v.Unmarshal(&c); err != nil { // ← デフォルト値を保持しつつマージ
-        return Config{}, err
-    }
-
-    // 3 Level が空なら "info"
-    if c.Log.Level == "" {
-        c.Log.Level = "info"
-    }
-    if _, err := logrus.ParseLevel(c.Log.Level); err != nil {
-        return Config{}, err
-    }
-    return c, nil
+	if err := v.Unmarshal(&c); err != nil {
+		return Config{}, err
+	}
+	if c.Log.Level == "" {
+		c.Log.Level = "info"
+	}
+	if _, err := logrus.ParseLevel(c.Log.Level); err != nil {
+		return Config{}, err
+	}
+	// Keep 値の正規化
+	switch c.Dedupe.Keep {
+	case "", "first":
+		c.Dedupe.Keep = "first"
+	case "last":
+	default:
+		c.Dedupe.Keep = "first"
+	}
+	return c, nil
 }
