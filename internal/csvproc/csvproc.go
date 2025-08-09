@@ -28,17 +28,24 @@ func Process(inFile, outFile string, conf config.Config, log logging.Logger) err
 	r.LazyQuotes = true
 
 	var out io.Writer = os.Stdout
+	var outCloser io.Closer
 	if outFile != "" {
 		f, err := os.Create(outFile)
 		if err != nil {
 			return err
 		}
-		defer f.Close()
 		out = f
+		outCloser = f
+		defer outCloser.Close()
 	}
+
+	// ★ CP932 の場合は transform.Writer を Close して確実にフラッシュ
 	if strings.EqualFold(conf.CodePage, "cp932") {
-		out = transform.NewWriter(out, japanese.ShiftJIS.NewEncoder())
+		tw := transform.NewWriter(out, japanese.ShiftJIS.NewEncoder())
+		out = tw
+		defer tw.Close()
 	}
+
 	w := csv.NewWriter(out)
 
 	opts := normalize.Options{
@@ -55,7 +62,7 @@ func Process(inFile, outFile string, conf config.Config, log logging.Logger) err
 		RemoveChars:        conf.Normalize.RemoveChars,
 	}
 
-	// 1→0 オリジン変換
+	// 1→0 変換
 	toZero := func(cols []int) []int {
 		z := make([]int, 0, len(cols))
 		for _, c := range cols {
@@ -76,15 +83,112 @@ func Process(inFile, outFile string, conf config.Config, log logging.Logger) err
 		sep = "|"
 	}
 
-	type row struct {
-		fields []string
-		key    string // dedupe key（Enabled のときのみ使用）
-	}
+	// --- デバッグ用カウンタ（-v 時に出力） ---
+	var total, wrote, dropped, emptyKey int
+
+	// --- ストリーミング書き出し路線か？ ---
+	streamMode := !conf.Dedupe.Enabled || !conf.Dedupe.DropDuplicates || len(dedupeCols) == 0
+
+	// ヘッダ処理
 	var header []string
+	if conf.HasHeader {
+		rec, err := r.Read()
+		if err == io.EOF {
+			// 空CSV
+			w.Flush()
+			return w.Error()
+		}
+		if err != nil {
+			return err
+		}
+		header = append([]string{}, rec...)
+		if conf.Dedupe.Enabled && conf.Dedupe.AppendKey {
+			header = append(header, conf.Dedupe.OutputHeader)
+		}
+		if err := w.Write(header); err != nil {
+			return err
+		}
+		wrote++
+	}
+
+	if streamMode {
+		// ====== ストリーミング書き出し（ここなら「ヘッダだけ」には絶対ならない） ======
+		for {
+			rec, err := r.Read()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				log.Errorf("CSV 読取エラー: %v", err)
+				continue
+			}
+			total++
+
+			// 正規化（行内キャッシュ）
+			normalized := make(map[int]string)
+			for _, col := range targetCols {
+				if col >= 0 && col < len(rec) {
+					cleaned := normalize.Clean(rec[col], opts)
+					normalized[col] = cleaned
+					if conf.Normalize.WriteBack {
+						rec[col] = cleaned
+					}
+				}
+			}
+
+			// キー生成（append/replace用）
+			if conf.Dedupe.Enabled && len(dedupeCols) > 0 {
+				values := make([]string, 0, len(dedupeCols))
+				for _, col := range dedupeCols {
+					v := ""
+					if conf.Dedupe.UseNormalized {
+						if n, ok := normalized[col]; ok {
+							v = n
+						} else if col >= 0 && col < len(rec) {
+							v = normalize.Clean(rec[col], opts)
+						}
+					} else if col >= 0 && col < len(rec) {
+						v = rec[col]
+					}
+					values = append(values, v)
+				}
+				key := strings.Join(values, sep)
+				if strings.TrimSpace(key) == "" {
+					emptyKey++
+				}
+				if conf.Dedupe.ReplaceTarget && len(dedupeCols) > 0 {
+					firstCol := dedupeCols[0]
+					if firstCol >= 0 && firstCol < len(rec) {
+						rec[firstCol] = key
+					}
+				}
+				if conf.Dedupe.AppendKey {
+					rec = append(rec, key)
+				}
+			}
+
+			if err := w.Write(rec); err != nil {
+				return err
+			}
+			wrote++
+		}
+
+		w.Flush()
+		if err := w.Error(); err != nil {
+			return err
+		}
+		log.Debugf("stream: rows_read=%d wrote=%d empty_keys=%d", total, wrote, emptyKey)
+		return nil
+	}
+
+	// ====== ここからは drop_duplicates: true かつ dedupe 有効時（keep=first/last） ======
+	type row struct {
+		fields    []string
+		key       string
+		skipDedup bool // 空キーなど
+	}
 	var rows []row
 
-	// ---- 読み込み（全行をメモリに積む。keep=last対応のため） ----------
-	first := true
 	for {
 		rec, err := r.Read()
 		if err == io.EOF {
@@ -94,17 +198,9 @@ func Process(inFile, outFile string, conf config.Config, log logging.Logger) err
 			log.Errorf("CSV 読取エラー: %v", err)
 			continue
 		}
+		total++
 
-		if first && conf.HasHeader {
-			header = append([]string{}, rec...)
-			first = false
-			continue
-		}
-		first = false
-
-		// 1) 正規化（対象列）— 書戻しはオプション化
-		//    さらに「行内キャッシュ」に正規化結果を保持（キー作成で再利用）
-		normalized := make(map[int]string) // ← 各行ごとに用意
+		normalized := make(map[int]string)
 		for _, col := range targetCols {
 			if col >= 0 && col < len(rec) {
 				cleaned := normalize.Clean(rec[col], opts)
@@ -115,106 +211,87 @@ func Process(inFile, outFile string, conf config.Config, log logging.Logger) err
 			}
 		}
 
-		// 2) 重複キー生成（正規化後 or 元値のどちらを使うか選択可能）
-		var key string
-		if conf.Dedupe.Enabled && len(dedupeCols) > 0 {
-			values := make([]string, 0, len(dedupeCols))
-			for _, col := range dedupeCols {
-				var v string
-				if conf.Dedupe.UseNormalized {
-					if n, ok := normalized[col]; ok {
-						v = n
-					} else if col >= 0 && col < len(rec) {
-						// 対象外列でもキーには正規化を適用したいケース
-						v = normalize.Clean(rec[col], opts)
-					} else {
-						v = ""
-					}
-				} else {
-					if col >= 0 && col < len(rec) {
-						v = rec[col]
-					} else {
-						v = ""
-					}
+		values := make([]string, 0, len(dedupeCols))
+		for _, col := range dedupeCols {
+			v := ""
+			if conf.Dedupe.UseNormalized {
+				if n, ok := normalized[col]; ok {
+					v = n
+				} else if col >= 0 && col < len(rec) {
+					v = normalize.Clean(rec[col], opts)
 				}
-				values = append(values, v)
+			} else if col >= 0 && col < len(rec) {
+				v = rec[col]
 			}
-			sep := conf.Dedupe.Delimiter
-			if sep == "" {
-				sep = "|"
-			}
-			key = strings.Join(values, sep)
+			values = append(values, v)
+		}
+		key := strings.Join(values, sep)
 
-			// 置換（columns先頭）— replace_target が true のときのみ
-			if conf.Dedupe.ReplaceTarget && len(dedupeCols) > 0 {
-				firstCol := dedupeCols[0]
-				if firstCol >= 0 && firstCol < len(rec) {
-					rec[firstCol] = key
-				}
-			}
-			// 追加（append_key）
-			if conf.Dedupe.AppendKey {
-				rec = append(rec, key)
+		skip := false
+		if strings.TrimSpace(key) == "" {
+			skip = true // 空キーはdrop対象外で必ず出力
+			emptyKey++
+		}
+
+		if conf.Dedupe.ReplaceTarget && len(dedupeCols) > 0 && !skip {
+			firstCol := dedupeCols[0]
+			if firstCol >= 0 && firstCol < len(rec) {
+				rec[firstCol] = key
 			}
 		}
-	}
-
-	// ---- ヘッダ出力 -----------------------------------------------------
-	if conf.HasHeader {
-		if conf.Dedupe.Enabled && conf.Dedupe.AppendKey {
-			header = append(header, conf.Dedupe.OutputHeader)
+		if conf.Dedupe.AppendKey {
+			rec = append(rec, key)
 		}
-		if err := w.Write(header); err != nil {
-			return err
-		}
+
+		rows = append(rows, row{fields: rec, key: key, skipDedup: skip})
 	}
 
-	// ---- 重複排除 -------------------------------------------------------
-	writeRow := func(i int) error {
-		return w.Write(rows[i].fields)
-	}
-
-	if conf.Dedupe.Enabled && conf.Dedupe.DropDuplicates && len(dedupeCols) > 0 {
-		seen := map[string]struct{}{}
-		switch conf.Dedupe.Keep {
-		case "last":
-			// 後ろから走査し、最初に出会ったキーを採用
-			keep := make([]bool, len(rows))
-			for i := len(rows) - 1; i >= 0; i-- {
-				k := rows[i].key
-				if _, ok := seen[k]; !ok {
-					seen[k] = struct{}{}
-					keep[i] = true
-				}
+	seen := map[string]struct{}{}
+	switch conf.Dedupe.Keep {
+	case "last":
+		keep := make([]bool, len(rows))
+		for i := len(rows) - 1; i >= 0; i-- {
+			if rows[i].skipDedup {
+				keep[i] = true
+				continue
 			}
-			for i := 0; i < len(rows); i++ {
-				if keep[i] {
-					if err := writeRow(i); err != nil {
-						return err
-					}
-				}
-			}
-		default: // "first"
-			for i := 0; i < len(rows); i++ {
-				k := rows[i].key
-				if _, ok := seen[k]; ok {
-					continue
-				}
+			k := rows[i].key
+			if _, ok := seen[k]; !ok {
 				seen[k] = struct{}{}
-				if err := writeRow(i); err != nil {
-					return err
-				}
+				keep[i] = true
+			} else {
+				dropped++
 			}
 		}
-	} else {
-		// 重複排除しない/キー未指定 → すべて出力
 		for i := 0; i < len(rows); i++ {
-			if err := writeRow(i); err != nil {
-				return err
+			if keep[i] {
+				_ = w.Write(rows[i].fields)
+				wrote++
 			}
+		}
+	default: // first
+		for i := 0; i < len(rows); i++ {
+			if rows[i].skipDedup {
+				_ = w.Write(rows[i].fields)
+				wrote++
+				continue
+			}
+			k := rows[i].key
+			if _, ok := seen[k]; ok {
+				dropped++
+				continue
+			}
+			seen[k] = struct{}{}
+			_ = w.Write(rows[i].fields)
+			wrote++
 		}
 	}
 
 	w.Flush()
-	return w.Error()
+	if err := w.Error(); err != nil {
+		return err
+	}
+	log.Debugf("dedupe: rows_read=%d wrote=%d dropped=%d empty_keys=%d keep=%s",
+		total, wrote, dropped, emptyKey, conf.Dedupe.Keep)
+	return nil
 }

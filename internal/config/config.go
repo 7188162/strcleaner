@@ -30,15 +30,16 @@ type NormalizeConfig struct {
 }
 
 type DedupeConfig struct {
-	Enabled        bool   `mapstructure:"enabled"`         // 重複排除を有効化
-	Columns        []int  `mapstructure:"columns"`         // キー作成に使う列(1オリジン)。未指定なら Config.Columns
-	AppendKey      bool   `mapstructure:"append_key"`      // キー列を末尾に追加
-	ReplaceTarget  bool   `mapstructure:"replace_target"`  // columns先頭列をキーで置換
-	DropDuplicates bool   `mapstructure:"drop_duplicates"` // 既出キーの行を出力しない
-	Keep           string `mapstructure:"keep"`            // first|last（DropDuplicates時の残し方）
-	OutputHeader   string `mapstructure:"output_header"`   // AppendKey時のヘッダ名
-	Delimiter      string `mapstructure:"delimiter"`       // 連結区切り
-	UseNormalized  bool   `mapstructure:"use_normalized"`  // キー生成に正規化後を使うか(既定true)
+	Enabled        bool   `mapstructure:"enabled"`          // 重複排除を有効化
+	Columns        []int  `mapstructure:"columns"`          // キー作成に使う列(1オリジン)。未指定なら Config.Columns
+	AppendKey      bool   `mapstructure:"append_key"`       // キー列を末尾に追加
+	ReplaceTarget  bool   `mapstructure:"replace_target"`   // columns先頭列をキーで置換
+	DropDuplicates bool   `mapstructure:"drop_duplicates"`  // 既出キーの行を出力しない
+	Keep           string `mapstructure:"keep"`             // first|last（DropDuplicates時の残し方）
+	OutputHeader   string `mapstructure:"output_header"`    // AppendKey時のヘッダ名
+	Delimiter      string `mapstructure:"delimiter"`        // 連結区切り
+	UseNormalized  bool   `mapstructure:"use_normalized"`   // キー生成に正規化後を使うか(既定true)
+	IgnoreEmptyKey bool   `mapstructure:"ignore_empty_key"` // ★追加：空キーはdrop対象外
 }
 
 type Config struct {
@@ -75,6 +76,7 @@ func defaultConfig() Config {
 			Delimiter:      "|",
 			OutputHeader:   "__dedupe_key",
 			UseNormalized:  true, // ★既定true
+			IgnoreEmptyKey: true, // ★既定で“空キーは落とさない”
 		},
 		Timeout: 10 * time.Minute,
 	}
