@@ -1,0 +1,14 @@
+# config.yaml
+columns: [0]          # 正規化する列（例: 1 列目）
+
+code_page: utf8       # 入出力は UTF-8
+
+normalize:
+  to_lower:             true          # Python で df.str.lower()
+  dash_to_hyphen:       false         # Python はハイフン類を除去するため無効化
+  remove_html:          true          # <sup> <sub> <i> <br> ... 全除去
+  remove_parens:        true          # （ ） [ ] 等を削除
+  remove_non_printable: true          # \n \r ゼロ幅など一括削除
+  # Python が空白・ハイフン・記号を大量除去していたので列挙
+  remove_chars: |-
+    　‘’“”'`" .[]｢｣「」【】『』、,－–—‐- ：:；;《》«»/゛ー
