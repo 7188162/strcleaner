@@ -26,6 +26,7 @@ type NormalizeConfig struct {
 	RemoveNonPrintable bool   `mapstructure:"remove_non_printable"`
 	RemoveHTML         bool   `mapstructure:"remove_html"`
 	RemoveChars        string `mapstructure:"remove_chars"`
+	WriteBack          bool   `mapstructure:"write_back"` // 正規化結果を列へ書戻すか(既定true)
 }
 
 type DedupeConfig struct {
@@ -37,6 +38,7 @@ type DedupeConfig struct {
 	Keep           string `mapstructure:"keep"`            // first|last（DropDuplicates時の残し方）
 	OutputHeader   string `mapstructure:"output_header"`   // AppendKey時のヘッダ名
 	Delimiter      string `mapstructure:"delimiter"`       // 連結区切り
+	UseNormalized  bool   `mapstructure:"use_normalized"`  // キー生成に正規化後を使うか(既定true)
 }
 
 type Config struct {
@@ -62,6 +64,7 @@ func defaultConfig() Config {
 		Normalize: NormalizeConfig{
 			FullDigitToHalf: true,
 			DashToHyphen:    true,
+			WriteBack:       true, // ★既定true
 		},
 		Dedupe: DedupeConfig{
 			Enabled:        false,
@@ -71,6 +74,7 @@ func defaultConfig() Config {
 			Keep:           "first",
 			Delimiter:      "|",
 			OutputHeader:   "__dedupe_key",
+			UseNormalized:  true, // ★既定true
 		},
 		Timeout: 10 * time.Minute,
 	}

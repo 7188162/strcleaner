@@ -102,41 +102,61 @@ func Process(inFile, outFile string, conf config.Config, log logging.Logger) err
 		}
 		first = false
 
-		// 正規化（対象列のみ）
+		// 1) 正規化（対象列）— 書戻しはオプション化
+		//    さらに「行内キャッシュ」に正規化結果を保持（キー作成で再利用）
+		normalized := make(map[int]string) // ← 各行ごとに用意
 		for _, col := range targetCols {
 			if col >= 0 && col < len(rec) {
-				rec[col] = normalize.Clean(rec[col], opts)
+				cleaned := normalize.Clean(rec[col], opts)
+				normalized[col] = cleaned
+				if conf.Normalize.WriteBack {
+					rec[col] = cleaned
+				}
 			}
 		}
 
-		// 重複キー作成
+		// 2) 重複キー生成（正規化後 or 元値のどちらを使うか選択可能）
 		var key string
 		if conf.Dedupe.Enabled && len(dedupeCols) > 0 {
 			values := make([]string, 0, len(dedupeCols))
 			for _, col := range dedupeCols {
-				if col >= 0 && col < len(rec) {
-					values = append(values, rec[col])
+				var v string
+				if conf.Dedupe.UseNormalized {
+					if n, ok := normalized[col]; ok {
+						v = n
+					} else if col >= 0 && col < len(rec) {
+						// 対象外列でもキーには正規化を適用したいケース
+						v = normalize.Clean(rec[col], opts)
+					} else {
+						v = ""
+					}
 				} else {
-					values = append(values, "")
+					if col >= 0 && col < len(rec) {
+						v = rec[col]
+					} else {
+						v = ""
+					}
 				}
+				values = append(values, v)
+			}
+			sep := conf.Dedupe.Delimiter
+			if sep == "" {
+				sep = "|"
 			}
 			key = strings.Join(values, sep)
 
-			// 置換（columns先頭）
+			// 置換（columns先頭）— replace_target が true のときのみ
 			if conf.Dedupe.ReplaceTarget && len(dedupeCols) > 0 {
 				firstCol := dedupeCols[0]
 				if firstCol >= 0 && firstCol < len(rec) {
 					rec[firstCol] = key
 				}
 			}
-
-			// 追加
+			// 追加（append_key）
 			if conf.Dedupe.AppendKey {
 				rec = append(rec, key)
 			}
 		}
-
-		rows = append(rows, row{fields: rec, key: key})
 	}
 
 	// ---- ヘッダ出力 -----------------------------------------------------
