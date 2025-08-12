@@ -1,5 +1,6 @@
 # strcleaner — CSV 文字列正規化 & 重複排除ツール
-Windows / Linux / macOS 対応のコンソールアプリ。Excel 由来の CSV、CP932(Shift\_JIS)・UTF-8(BOM 有無) を想定。
+
+> Windows / Linux / macOS 対応のコンソールアプリ。Excel 由来の CSV、CP932(Shift\_JIS)・UTF-8(BOM 有無) を想定。
 
 ---
 
@@ -96,6 +97,9 @@ go test ./...
 columns: [1]            # 1オリジン: 正規化する列 (例: 論文題目)
 code_page: utf8         # cp932 なら "cp932"
 has_header: true        # 1行目はヘッダ
+output:
+  line_ending: crlf     # 既定: crlf （Excel想定）
+  utf8_bom: true        # 既定: true
 
 normalize:
   to_lower: true
@@ -105,7 +109,7 @@ normalize:
   dash_to_hyphen: false   # ハイフン類は統一せず、下で“削除”
   write_back: true        # 正規化した値で元列を上書き
   remove_chars: |-
-      　 ' ‘ ’ “ ” " “” ` ゛
+      　 ' ‘ ’ “ ” \" “” ` ゛
       . , 、 < > － – — ― ‐ - ー ： : ； ; 《 》 « » /
 
 # 重複排除は使わない場合
@@ -195,7 +199,7 @@ dedupe:
 
 ## 重複排除（dedupe）の仕様
 
-- `columns`（1オリジン）で指定した列の **正規化後/前（**``**）** の値を連結し、キーを作成。
+- `columns`（1オリジン）で指定した列の **正規化後/前（**\`\`**）** の値を連結し、キーを作成。
 - `append_key` でキー列を末尾に追加（`output_header` はヘッダ行がある場合の見出し）。
 - `replace_target` で `dedupe.columns` の **先頭列をキー文字列に置換**。
 - `drop_duplicates` が true の場合：
@@ -206,10 +210,21 @@ dedupe:
 
 ---
 
-## 文字コード（入出力）
+## 文字コード・出力フォーマット（入出力）
 
 - `code_page: utf8`（既定）/ `cp932` をサポート。
-- `cp932` 指定時は、読み込みに Shift\_JIS デコーダ、書き込みにエンコーダを適用（BOM 有無は気にせず UTF-8 も可）。
+- `cp932` 指定時は、読み込みに Shift\_JIS デコーダ、書き込みにエンコーダを適用。
+- **出力改行コード** は `output.line_ending` で制御（`crlf` 既定 / `lf`）。
+- **UTF-8 の BOM 有無** は `output.utf8_bom` で制御（既定: `true`）。`cp932` では無視されます。
+
+**設定例**
+
+```yaml
+code_page: utf8
+output:
+  line_ending: crlf   # crlf|lf（既定: crlf）
+  utf8_bom: true      # true|false（既定: true）
+```
 
 ---
 
@@ -240,7 +255,9 @@ log:
 # PowerShell 例
 $env:STRCLEANER_CODE_PAGE = "cp932"
 $env:STRCLEANER_HAS_HEADER = "true"
-$env:STRCLEANER_NORMALIZE__TO_LOWER = "true"          # ネストは「__」など環境に応じて置換
+$env:STRCLEANER_OUTPUT__LINE_ENDING = "lf"  # crlf|lf
+$env:STRCLEANER_OUTPUT__UTF8_BOM = "false"  # true|false
+$env:STRCLEANER_NORMALIZE__TO_LOWER = "true"
 $env:STRCLEANER_DEDUPE__ENABLED = "true"
 ```
 
@@ -288,11 +305,11 @@ abｶﾀｶﾅ,山田 太郎
 
 ## トラブルシュート
 
-- ``
+- \`\`
   - `go.mod` の `module` と import パスが不一致です。`module github.com/yourorg/strcleaner` に修正するか、`replace github.com/yourorg/strcleaner => .` を追加。
-- ``**（build 失敗）**
+- \`\`**（build 失敗）**
   - `width.Transformer` に `TransformRune` はありません。`transform.String(width.Narrow, s)` を使用（本リポジトリは修正済み）。
-- ``
+- \`\`
   - `log.level` 未指定。`info` を既定で適用（本リポジトリは防御コード済み）。
 - **列は 1 オリジン？**
   - はい。`columns: [1,3]` は 1 列目と 3 列目を指します。`0` 以下は無視。

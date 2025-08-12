@@ -46,6 +46,9 @@ func init() {
 	f.BoolVarP(&quiet, "silent", "s", false, "silent モード (結果のみ)")
 	f.BoolVarP(&verbose, "verbose", "v", false, "verbose モード")
 
+        f.String("output.line_ending", "", "出力改行コード (crlf|lf)")
+        f.Bool("output.utf8_bom", false, "UTF-8 の BOM を付与する (true/false)")
+
 	rootCmd.MarkFlagRequired("input")
 }
 

@@ -28,6 +28,13 @@ func Process(inFile, outFile string, conf config.Config, log logging.Logger) err
 	r.LazyQuotes = true
 
 	var out io.Writer = os.Stdout
+
+        if strings.EqualFold(conf.CodePage, "utf8") && conf.Output.UTF8BOM {
+            if _, err := out.Write([]byte{0xEF, 0xBB, 0xBF}); err != nil {
+                return err
+            }
+        }
+
 	var outCloser io.Closer
 	if outFile != "" {
 		f, err := os.Create(outFile)
@@ -47,6 +54,8 @@ func Process(inFile, outFile string, conf config.Config, log logging.Logger) err
 	}
 
 	w := csv.NewWriter(out)
+
+        w.UseCRLF = strings.EqualFold(conf.Output.LineEnding, "crlf")
 
 	opts := normalize.Options{
 		ToUpper:            conf.Normalize.ToUpper,

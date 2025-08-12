@@ -2,6 +2,8 @@ package config
 
 import (
 	"time"
+        "strings"
+        "strconv"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
@@ -42,6 +44,11 @@ type DedupeConfig struct {
 	IgnoreEmptyKey bool   `mapstructure:"ignore_empty_key"` // ★追加：空キーはdrop対象外
 }
 
+type OutputConfig struct {
+    LineEnding string `mapstructure:"line_ending"` // "crlf" | "lf" (default: "crlf")
+    UTF8BOM    bool   `mapstructure:"utf8_bom"`    // default: true（UTF-8 のときのみ有効）
+}
+
 type Config struct {
 	Columns   []int           `mapstructure:"columns"`    // 正規化対象列(1オリジン)
 	CodePage  string          `mapstructure:"code_page"`  // cp932|utf8
@@ -49,6 +56,7 @@ type Config struct {
 	Log       LogConfig       `mapstructure:"log"`
 	Normalize NormalizeConfig `mapstructure:"normalize"`
 	Dedupe    DedupeConfig    `mapstructure:"dedupe"`
+        Output    OutputConfig    `mapstructure:"output"`
 	Timeout   time.Duration   `mapstructure:"timeout"`
 }
 
@@ -78,6 +86,10 @@ func defaultConfig() Config {
 			UseNormalized:  true, // ★既定true
 			IgnoreEmptyKey: true, // ★既定で“空キーは落とさない”
 		},
+                Output: OutputConfig{
+                    LineEnding: "crlf", 
+                    UTF8BOM:    true,   
+                },
 		Timeout: 10 * time.Minute,
 	}
 }
@@ -92,20 +104,43 @@ func Load(cfgFile string, flags *pflag.FlagSet) (Config, error) {
 	}
 	v.SetConfigType("yaml")
 	v.SetEnvPrefix("STRCLEANER")
+        v.SetEnvKeyReplacer(strings.NewReplacer(".", "__")) // 環境変数のネスト対応
 	v.AutomaticEnv()
 
 	_ = v.ReadInConfig()
-	_ = v.BindPFlags(flags)
 
 	if err := v.Unmarshal(&c); err != nil {
 		return Config{}, err
 	}
+
+        if flags != nil {
+            if f := flags.Lookup("output.line_ending"); f != nil && f.Changed {
+                c.Output.LineEnding = strings.ToLower(f.Value.String())
+            }
+            if f := flags.Lookup("output.utf8_bom"); f != nil && f.Changed {
+                if b, err := strconv.ParseBool(f.Value.String()); err == nil {
+                    c.Output.UTF8BOM = b
+                }
+            }
+        }
+
 	if c.Log.Level == "" {
 		c.Log.Level = "info"
 	}
 	if _, err := logrus.ParseLevel(c.Log.Level); err != nil {
 		return Config{}, err
 	}
+
+        // line_ending の値を正規化
+        switch strings.ToLower(c.Output.LineEnding) {
+        case "", "crlf":
+            c.Output.LineEnding = "crlf"
+        case "lf":
+            // ok
+        default:
+            c.Output.LineEnding = "crlf"
+        }
+
 	// Keep 値の正規化
 	switch c.Dedupe.Keep {
 	case "", "first":
