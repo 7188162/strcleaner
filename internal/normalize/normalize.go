@@ -20,16 +20,21 @@ type Options struct {
 	DashToHyphen       bool
 	RemoveParens       bool
 	RemoveNonPrintable bool
+	RemoveCRLFOnly     bool
 	RemoveHTML         bool
 	RemoveChars        string
+	RemoveCharsList    []string
+	RemovePunctuation  bool
+	RemoveSymbols      bool
+	RemoveEmoji        bool
 }
 
 var (
-	reParenNum      = regexp.MustCompile(`［?([０-９])］?|\(([０-９])\)|【([０-９])】|〔([０-９])〕|[①-⑨]`)
-	reDash          = regexp.MustCompile(`[ー－―–—‐]`)
-	reParens        = regexp.MustCompile(`[()\[\]{}「」『』【】［］〔〕（）]`)
-	reNonPrintable  = regexp.MustCompile(`[\p{Cc}\p{Cf}]`)
-	reHTMLTag       = regexp.MustCompile(`</?[^>]+?>`)
+	reParenNum     = regexp.MustCompile(`［?([０-９])］?|\(([０-９])\)|【([０-９])】|〔([０-９])〕|[①-⑨]`)
+	reDash         = regexp.MustCompile(`[ー－―–—‐]`)
+	reParens       = regexp.MustCompile(`[()\[\]{}「」『』【】［］〔〕（）]`)
+	reNonPrintable = regexp.MustCompile(`[\p{Cc}\p{Cf}]`)
+	reHTMLTag      = regexp.MustCompile(`</?[^>]+?>`)
 )
 
 func Clean(s string, opt Options) string {
@@ -77,6 +82,42 @@ func Clean(s string, opt Options) string {
 		s = reNonPrintable.ReplaceAllString(s, "")
 	}
 
+	// ★ カテゴリ系の削除
+	if opt.RemovePunctuation {
+		s = removeByPredicate(s, func(r rune) bool { return unicode.In(r, unicode.Punct) })
+	}
+	if opt.RemoveSymbols {
+		s = removeByPredicate(s, func(r rune) bool { return unicode.In(r, unicode.Symbol) })
+	}
+	if opt.RemoveEmoji {
+		s = removeByPredicate(s, isEmoji)
+	}
+
+	// 6a. 改行だけ削除（CR/LF のみ）
+	if opt.RemoveCRLFOnly {
+		s = strings.Map(func(r rune) rune {
+			if r == '\r' || r == '\n' {
+				return -1
+			}
+			return r
+		}, s)
+	}
+
+	// 6b. 非印刷（制御/書式）を一括削除
+	if opt.RemoveNonPrintable {
+		s = reNonPrintable.ReplaceAllString(s, "")
+	}
+
+	// 個別文字削除（配列も併用）
+	if opt.RemoveChars != "" || len(opt.RemoveCharsList) > 0 {
+		var b strings.Builder
+		for _, s2 := range opt.RemoveCharsList {
+			b.WriteString(s2)
+		}
+		b.WriteString(opt.RemoveChars)
+		s = removeChars(s, b.String())
+	}
+
 	// 7. 個別削除
 	if opt.RemoveChars != "" {
 		s = removeChars(s, opt.RemoveChars)
@@ -85,14 +126,14 @@ func Clean(s string, opt Options) string {
 	return strings.TrimSpace(s)
 }
 
-// func transformString(t width.Transformer, s string) string {
-// 	return strings.Map(func(r rune) rune {
-// 		r, _ = t.TransformRune(r)
-// 		return r
-// 	}, s)
+//	func transformString(t width.Transformer, s string) string {
+//		return strings.Map(func(r rune) rune {
+//			r, _ = t.TransformRune(r)
+//			return r
+//		}, s)
 func transformString(t transform.Transformer, s string) string {
-    out, _, _ := transform.String(t, s) // ★ ここを変更
-    return out
+	out, _, _ := transform.String(t, s) // ★ ここを変更
+	return out
 
 }
 
@@ -124,4 +165,40 @@ func removeChars(s, chars string) string {
 
 func IsZenkakuDigit(r rune) bool {
 	return unicode.In(r, unicode.Number) && r >= '０' && r <= '９'
+}
+
+func removeByPredicate(s string, pred func(rune) bool) string {
+	return strings.Map(func(r rune) rune {
+		if pred(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+func isEmoji(r rune) bool {
+	switch {
+	case r == 0x200D || r == 0xFE0F || r == 0x20E3: // ZWJ / VS-16 / keycap
+		return true
+	case r >= 0x1F3FB && r <= 0x1F3FF: // skin tones
+		return true
+	case r >= 0x1F600 && r <= 0x1F64F: // Emoticons
+		return true
+	case r >= 0x1F300 && r <= 0x1F5FF: // Misc Symbols and Pictographs
+		return true
+	case r >= 0x1F680 && r <= 0x1F6FF: // Transport & Map
+		return true
+	case r >= 0x2600 && r <= 0x26FF: // Misc Symbols
+		return true
+	case r >= 0x2700 && r <= 0x27BF: // Dingbats
+		return true
+	case r >= 0x1F900 && r <= 0x1F9FF: // Supplemental Symbols & Pictographs
+		return true
+	case r >= 0x1FA70 && r <= 0x1FAFF: // Symbols & Pictographs Extended-A
+		return true
+	case r >= 0x1F1E6 && r <= 0x1F1FF: // Regional Indicator
+		return true
+	default:
+		return false
+	}
 }

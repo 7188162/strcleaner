@@ -29,11 +29,11 @@ func Process(inFile, outFile string, conf config.Config, log logging.Logger) err
 
 	var out io.Writer = os.Stdout
 
-        if strings.EqualFold(conf.CodePage, "utf8") && conf.Output.UTF8BOM {
-            if _, err := out.Write([]byte{0xEF, 0xBB, 0xBF}); err != nil {
-                return err
-            }
-        }
+	if strings.EqualFold(conf.CodePage, "utf8") && conf.Output.UTF8BOM {
+		if _, err := out.Write([]byte{0xEF, 0xBB, 0xBF}); err != nil {
+			return err
+		}
+	}
 
 	var outCloser io.Closer
 	if outFile != "" {
@@ -55,7 +55,7 @@ func Process(inFile, outFile string, conf config.Config, log logging.Logger) err
 
 	w := csv.NewWriter(out)
 
-        w.UseCRLF = strings.EqualFold(conf.Output.LineEnding, "crlf")
+	w.UseCRLF = strings.EqualFold(conf.Output.LineEnding, "crlf")
 
 	opts := normalize.Options{
 		ToUpper:            conf.Normalize.ToUpper,
@@ -68,7 +68,12 @@ func Process(inFile, outFile string, conf config.Config, log logging.Logger) err
 		RemoveParens:       conf.Normalize.RemoveParens,
 		RemoveNonPrintable: conf.Normalize.RemoveNonPrintable,
 		RemoveHTML:         conf.Normalize.RemoveHTML,
-		RemoveChars:        conf.Normalize.RemoveChars,
+		RemoveChars:        "",                              
+		RemoveCharsList:    conf.Normalize.RemoveChars.Items,
+		RemoveCRLFOnly:     conf.Normalize.RemoveCRLFOnly,
+		RemovePunctuation:  conf.Normalize.RemovePunctuation,
+		RemoveSymbols:      conf.Normalize.RemoveSymbols,
+		RemoveEmoji:        conf.Normalize.RemoveEmoji,
 	}
 
 	// 1→0 変換
