@@ -24,9 +24,14 @@ type Options struct {
 	RemoveHTML         bool
 	RemoveChars        string
 	RemoveCharsList    []string
-	RemovePunctuation  bool
-	RemoveSymbols      bool
-	RemoveEmoji        bool
+
+	RemoveHTMLTags   []string       // 指定タグのみ除去
+	removeTagsRe     *regexp.Regexp // 事前コンパイル済み
+	RemoveSubstrings []string       // 指定の“部分文字列”をリテラル除去
+
+	RemovePunctuation bool
+	RemoveSymbols     bool
+	RemoveEmoji       bool
 }
 
 var (
@@ -36,6 +41,35 @@ var (
 	reNonPrintable = regexp.MustCompile(`[\p{Cc}\p{Cf}]`)
 	reHTMLTag      = regexp.MustCompile(`</?[^>]+?>`)
 )
+
+func compileTagRegex(tags []string) *regexp.Regexp {
+	if len(tags) == 0 {
+		return nil
+	}
+	esc := make([]string, 0, len(tags))
+	for _, t := range tags {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		esc = append(esc, regexp.QuoteMeta(t))
+	}
+	if len(esc) == 0 {
+		return nil
+	}
+	// (?is) … i=case-insensitive, s=dotall（改行にもマッチ）
+	// </? TAG \b [^>]* >
+	pat := `(?is)</?\s*(?:` + strings.Join(esc, "|") + `)\b[^>]*>`
+	return regexp.MustCompile(pat)
+}
+
+func (o *Options) Prepare() {
+	if len(o.RemoveHTMLTags) > 0 {
+		o.removeTagsRe = compileTagRegex(o.RemoveHTMLTags)
+	} else {
+		o.removeTagsRe = nil
+	}
+}
 
 func Clean(s string, opt Options) string {
 	// 0. NFKC
@@ -72,7 +106,12 @@ func Clean(s string, opt Options) string {
 		s = reParens.ReplaceAllString(s, "")
 	}
 
-	// 5. HTML
+	// 5-1. 特定タグだけ除去（中身は保持）
+	if opt.removeTagsRe != nil {
+		s = opt.removeTagsRe.ReplaceAllString(s, "")
+	}
+
+	// 5-2. HTML 全除去（remove_html: true のとき）
 	if opt.RemoveHTML {
 		s = reHTMLTag.ReplaceAllString(s, "")
 	}
@@ -121,6 +160,26 @@ func Clean(s string, opt Options) string {
 	// 7. 個別削除
 	if opt.RemoveChars != "" {
 		s = removeChars(s, opt.RemoveChars)
+	}
+
+	// 8. 特定部分文字列のリテラル除去
+	if len(opt.RemoveSubstrings) > 0 {
+		for _, sub := range opt.RemoveSubstrings {
+			if sub == "" {
+				continue
+			}
+			s = strings.ReplaceAll(s, sub, "")
+		}
+	}
+
+	// 9. 個別文字（集合）削除（配列＋文字列を合算）
+	if opt.RemoveChars != "" || len(opt.RemoveCharsList) > 0 {
+		var b strings.Builder
+		for _, set := range opt.RemoveCharsList {
+			b.WriteString(set)
+		}
+		b.WriteString(opt.RemoveChars)
+		s = removeChars(s, b.String())
 	}
 
 	return strings.TrimSpace(s)

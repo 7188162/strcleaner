@@ -41,6 +41,14 @@ type NormalizeConfig struct {
 	RemoveHTML         bool       `mapstructure:"remove_html"          yaml:"remove_html"`
 	RemoveChars        MultiChars `mapstructure:"remove_chars"         yaml:"remove_chars"`
 
+	RemoveHTMLTags   []string `mapstructure:"remove_html_tags"     yaml:"remove_html_tags"`
+	RemoveSubstrings []string `mapstructure:"remove_substrings"    yaml:"remove_substrings"`
+
+	// TrimSpaces        bool `mapstructure:"trim_spaces"          yaml:"trim_spaces"`
+	// TrimHyphens       bool `mapstructure:"trim_hyphens"         yaml:"trim_hyphens"`
+	// TrimUnderscores   bool `mapstructure:"trim_underscores"     yaml:"trim_underscores"`
+	// TrimChars         MultiChars `mapstructure:"trim_chars"           yaml:"trim_chars"`
+
 	WriteBack bool `mapstructure:"write_back"           yaml:"write_back"`
 
 	RemovePunctuation bool `mapstructure:"remove_punctuation"   yaml:"remove_punctuation"`

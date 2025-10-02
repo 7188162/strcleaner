@@ -68,13 +68,19 @@ func Process(inFile, outFile string, conf config.Config, log logging.Logger) err
 		RemoveParens:       conf.Normalize.RemoveParens,
 		RemoveNonPrintable: conf.Normalize.RemoveNonPrintable,
 		RemoveHTML:         conf.Normalize.RemoveHTML,
-		RemoveChars:        "",                              
+		RemoveChars:        "",
 		RemoveCharsList:    conf.Normalize.RemoveChars.Items,
-		RemoveCRLFOnly:     conf.Normalize.RemoveCRLFOnly,
-		RemovePunctuation:  conf.Normalize.RemovePunctuation,
-		RemoveSymbols:      conf.Normalize.RemoveSymbols,
-		RemoveEmoji:        conf.Normalize.RemoveEmoji,
+
+		RemoveHTMLTags:   conf.Normalize.RemoveHTMLTags,
+		RemoveSubstrings: conf.Normalize.RemoveSubstrings,
+
+		RemoveCRLFOnly:    conf.Normalize.RemoveCRLFOnly,
+		RemovePunctuation: conf.Normalize.RemovePunctuation,
+		RemoveSymbols:     conf.Normalize.RemoveSymbols,
+		RemoveEmoji:       conf.Normalize.RemoveEmoji,
 	}
+
+	opts.Prepare()
 
 	// 1→0 変換
 	toZero := func(cols []int) []int {
